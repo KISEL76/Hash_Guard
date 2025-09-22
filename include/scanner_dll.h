@@ -3,14 +3,16 @@
 #include <cstddef>
 #include <unordered_map>
 #include <string>
-#include <fstream>
+#include <vector>
 #include <iostream>
-#include <filesystem>
-#include <sstream>
-#include <iomanip>
-#include <openssl/md5.h> 
+#include <filesystem> 
+#include <fstream>
+#include <thread>
+#include <atomic>
 
 #include "scanner_report.h"
+#include "path_queue.h"
+#include "hash_utils.h"
 
 #ifdef __cplusplus
 extern "C" {

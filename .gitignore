@@ -1,0 +1,10 @@
+.DS_Store
+
+build/
+
+*.log
+
+*.exe
+*.dll
+*.o
+*.out

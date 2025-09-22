@@ -2,57 +2,6 @@
 
 namespace fs = std::filesystem;
 
-using recursive_directory_iterator = std::filesystem::recursive_directory_iterator;
-
-// Загрузка CSV базы 
-static std::unordered_map<std::string, std::string> LoadBase(const fs::path& filePath) {
-    std::unordered_map<std::string, std::string> db; // hash -> verdidict 
-    std::ifstream ifs(filePath);
-
-    if (!ifs) throw std::runtime_error("Не удалось открыть CSV: " + filePath.string());
-    std::string line;
-
-    while (std::getline(ifs, line)) {
-        auto pos = line.find(';');
-        if (pos != std::string::npos) {
-            std::string hash = line.substr(0, pos);
-            std::string verdict = line.substr(pos + 1);
-            db[hash] = verdict;
-        }
-    }
-    return db;
-}
-
-// Подсчет хэша MD5
-static std::string CalcMD5(const fs::path& filePath) {
-    std::ifstream ifs(filePath, std::ios::binary);
-    if (!ifs) throw std::runtime_error("Не удалось открыть: " + filePath.string());
-
-    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-    if (!ctx) throw std::runtime_error("EVP_MD_CTX_new failed");
-    const EVP_MD* md = EVP_md5();
-    if (EVP_DigestInit_ex(ctx, md, nullptr) != 1)
-        throw std::runtime_error("EVP_DigestInit_ex failed");
-
-    char buffer[8192];
-    while (ifs.read(buffer, sizeof(buffer)) || ifs.gcount() > 0) {
-        if (EVP_DigestUpdate(ctx, buffer, ifs.gcount()) != 1)
-            throw std::runtime_error("EVP_DigestUpdate failed");
-    }
-
-    unsigned char out[EVP_MAX_MD_SIZE];
-    unsigned int outlen = 0;
-    if (EVP_DigestFinal_ex(ctx, out, &outlen) != 1)
-        throw std::runtime_error("EVP_DigestFinal_ex failed");
-    EVP_MD_CTX_free(ctx);
-
-    std::ostringstream oss;
-    for (unsigned i = 0; i < outlen; ++i)
-        oss << std::hex << std::setw(2) << std::setfill('0') << (int)out[i];
-    return oss.str();
-}
-
-
 int ScanDirectory(const char* baseCSV, const char* logPath, const char* dirPath, ScanReport* outReport) {
     if (!outReport) return 2;
 
@@ -65,35 +14,68 @@ int ScanDirectory(const char* baseCSV, const char* logPath, const char* dirPath,
         fs::path dir(dirPath);
 
         auto db = LoadBase(base);
-        std::ofstream logFile(log, std::ios::app);
-        if (!logFile) throw std::runtime_error("Не удалось открыть лог: " + log.string());
 
-        for (const auto& entry : fs::recursive_directory_iterator(std::string(dirPath))) {
-            if (!entry.is_regular_file()) continue;
-            rep.incTotal();
-            try {
-                std::string md5 = CalcMD5(entry.path());
-                if (db.find(md5) != db.end()) {
-                    logFile << std::string(entry.path()) << ";" << md5 << ";" << db[md5] << std::endl;
-                    rep.incBad();
+        const unsigned workers = std::max(1u, std::thread::hardware_concurrency());
+        std::vector<std::string> threadLogs(workers); // для слияния логов воедино
+
+        std::mutex repMx; // для слияния отчетов
+        PathQueue q;
+
+        auto worker = [&](unsigned id) {
+            ScanReportCpp local;
+            std::ostringstream buf;
+            fs::path p;
+            while (q.pop(p)) {
+                try {
+                    if (!fs::is_regular_file(p)) continue;
+                    local.incTotal();
+                    std::string md5 = CalcMD5(p);
+                    if (auto it = db.find(md5); it != db.end()) {
+                        buf << p.string() << ';' << md5 << ';' << it->second << std::endl;
+                        local.incBad();
+                    }
+                } catch (...) {
+                    local.incErrors();
                 }
             }
-            catch(...) {
-                rep.incErrors();
+            // перемещаем логи в массив и соединяем репорты 
+            threadLogs[id] = std::move(buf).str();
+            {
+                std::lock_guard<std::mutex> lk(repMx);
+                rep.merge(local);
             }
+        };
+
+        // запуск воркеров
+        std::vector<std::thread> threads;
+        threads.reserve(workers);
+        for (unsigned i = 0; i < workers; ++i) threads.emplace_back(worker, i);
+
+        // продюсер заполняет очередь файлами
+        try {
+            for (const auto& entry : fs::recursive_directory_iterator(dir)) {
+                q.push(entry.path());
+            }
+        } catch (...) {
+            rep.incErrors();
         }
+
+        q.close();
+        for (auto& t : threads) t.join();
         rep.stop();
 
+        // итоговая запись в лог
+        std::ofstream logFile(log, std::ios::app);
+        if (!logFile) throw std::runtime_error("Не удалось открыть лог: " + log.string());
+        for (const auto& s : threadLogs) logFile << s;
 
         outReport->totalFiles     = rep.total();
         outReport->maliciousFiles = rep.bad();
         outReport->errorFiles     = rep.errors();
-        outReport->ms     = rep.durationMs();
+        outReport->ms             = rep.durationMs();
         
         return 0;
-    }
-    catch (...) {
+    } catch (...) {
         return 1;
     }
 }
-
