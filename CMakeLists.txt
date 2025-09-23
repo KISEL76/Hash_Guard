@@ -28,5 +28,5 @@ add_executable(scanner
 )
 target_link_libraries(scanner PRIVATE scanner_dll OpenSSL::Crypto)
 
-# enable_testing()
-# add_subdirectory(tests)
+enable_testing()
+add_subdirectory(tests)

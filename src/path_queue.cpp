@@ -1,9 +1,13 @@
 #include "../include/path_queue.h"
 
-void PathQueue::push(T v) {
-    std::lock_guard<std::mutex> lk(m);
-    q.push(std::move(v));
+bool PathQueue::push(T v) {
+    {
+        std::lock_guard<std::mutex> lk(m);
+        if (closed) return false;  
+        q.push(std::move(v));
+    }
     cv.notify_one();
+    return true;
 }
 
 bool PathQueue::pop(T &out) {

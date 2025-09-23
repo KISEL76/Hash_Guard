@@ -15,12 +15,20 @@ add_executable(scanner_tests
 )
 
 target_include_directories(scanner_tests PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(scanner_tests PRIVATE scanner_dll GTest::gtest_main)
 
-set_target_properties(scanner_tests PROPERTIES
-  MACOSX_RPATH ON
-  BUILD_RPATH "$ORIGIN"
+target_link_libraries(scanner_tests
+  PRIVATE
+    scanner_dll
+    GTest::gtest
+    GTest::gtest_main
 )
+
+if(APPLE)
+  set_target_properties(scanner_tests PROPERTIES
+    MACOSX_RPATH ON
+    BUILD_RPATH "$ORIGIN"
+  )
+endif()
 
 include(GoogleTest)
 gtest_discover_tests(scanner_tests)

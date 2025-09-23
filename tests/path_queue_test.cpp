@@ -3,6 +3,7 @@
 #include <vector>
 #include <atomic>
 #include <chrono>
+#include <fstream>
 
 #include "../include/path_queue.h"  
 
@@ -55,4 +56,40 @@ TEST(PathQueue, PopBlocksUntilNotifyOrClose) {
     t.join();
 
     EXPECT_TRUE(popped_false.load());
+}
+
+TEST(PathQueue, PushAfterClose) {
+    PathQueue q;
+    q.close();
+    fs::path p = "/tmp/x";
+    
+    q.push(p);
+    fs::path out;
+    EXPECT_FALSE(q.pop(out));
+}
+
+TEST(PathQueue, PopFromClosedEmpty) {
+    PathQueue q;
+    q.close();
+    fs::path out;
+    EXPECT_FALSE(q.pop(out));
+}
+
+TEST(PathQueue, PopBlocksUntilPush) {
+    PathQueue q;
+    std::atomic<bool> popped{false};
+    fs::path expected = "/tmp/zzz";
+
+    std::thread consumer([&]{
+        fs::path out;
+        bool ok = q.pop(out);
+        if (ok && out == expected) popped = true;
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    q.push(expected);
+    q.close();
+
+    consumer.join();
+    EXPECT_TRUE(popped.load());
 }

@@ -9,7 +9,7 @@ class PathQueue {
 public:
     using T = std::filesystem::path;
 
-    void push(T v);
+    bool push(T v);
 
     bool pop(T &out);
 
